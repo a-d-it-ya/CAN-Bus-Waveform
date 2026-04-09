@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAN Bus CANH / CANL Waveform</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #ffffff;
+    --bg2: #f4f4f2;
+    --text-primary: #1a1a18;
+    --text-secondary: #5f5e5a;
+    --border: rgba(0,0,0,0.12);
+    --border-hover: rgba(0,0,0,0.25);
+    --btn-active-bg: #185FA5;
+    --btn-active-color: #fff;
+    --radius: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1a;
+      --bg2: #252523;
+      --text-primary: #f0ede8;
+      --text-secondary: #8a8880;
+      --border: rgba(255,255,255,0.12);
+      --border-hover: rgba(255,255,255,0.28);
+    }
+  }
+
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    padding: 2rem 1.5rem;
+    min-height: 100vh;
+  }
+
+  h1 {
+    font-size: 17px;
+    font-weight: 500;
+    margin-bottom: 1.25rem;
+    color: var(--text-primary);
+  }
+
+  .ctrl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .lbl { font-size: 11px; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; }
+  .bit-input { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .bit-btn {
+    width: 36px; height: 36px;
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg2);
+    color: var(--text-primary);
+    font-size: 14px; font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .bit-btn:hover { border-color: var(--border-hover); }
+  .bit-btn.active { background: var(--btn-active-bg); color: var(--btn-active-color); border-color: var(--btn-active-bg); }
+
+  .rand-btn {
+    font-size: 12px; padding: 4px 12px;
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg2); color: var(--text-primary);
+    cursor: pointer; transition: background 0.15s;
+  }
+  .rand-btn:hover { background: var(--border); }
+
+  .chart-wrap { position: relative; width: 100%; height: 360px; }
+  canvas { width: 100%; display: block; }
+
+  .legend {
+    display: flex; gap: 20px; flex-wrap: wrap;
+    font-size: 12px; color: var(--text-secondary);
+    margin-top: 0.75rem;
+  }
+  .legend span { display: flex; align-items: center; gap: 5px; }
+  .swatch { width: 24px; height: 3px; border-radius: 2px; display: inline-block; }
+  .swatch-dash { width: 24px; height: 0; border-top: 2px dashed #888; display: inline-block; }
+</style>
+</head>
+<body>
+
+<h1>CAN Bus — CANH &amp; CANL Waveform (8-bit)</h1>
+
+<div class="ctrl">
+  <span class="lbl">Data bits (click to toggle):</span>
+  <div class="bit-input" id="bitRow"></div>
+  <button class="rand-btn" onclick="randomize()">Randomize</button>
+</div>
+
+<div class="chart-wrap">
+  <canvas id="waveCanvas" role="img" aria-label="CAN bus CANH and CANL differential waveform for 8-bit data sequence"></canvas>
+</div>
+
+<div class="legend">
+  <span><span class="swatch" style="background:#378ADD;"></span> CANH</span>
+  <span><span class="swatch" style="background:#D85A30;"></span> CANL</span>
+  <span><span class="swatch-dash"></span> Bus idle (2.5 V)</span>
+  <span>Dominant = bit 0 &nbsp;|&nbsp; Recessive = bit 1</span>
+</div>
+
+<script>
+const BITS = 8;
+let bits = [1,0,1,1,0,0,1,0];
+const isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+const CANH_DOM = 3.5, CANH_REC = 2.5;
+const CANL_DOM = 1.5, CANL_REC = 2.5;
+const V_MIN = 0.5, V_MAX = 4.5;
+
+function buildBitRow() {
+  const row = document.getElementById('bitRow');
+  row.innerHTML = '';
+  bits.forEach((b, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'bit-btn' + (b === 0 ? ' active' : '');
+    btn.textContent = b;
+    btn.title = b === 0 ? 'Dominant (0)' : 'Recessive (1)';
+    btn.onclick = () => { bits[i] ^= 1; buildBitRow(); draw(); };
+    row.appendChild(btn);
+  });
+}
+
+function randomize() {
+  bits = Array.from({length: BITS}, () => Math.round(Math.random()));
+  buildBitRow(); draw();
+}
+
+function draw() {
+  const canvas = document.getElementById('waveCanvas');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.clientWidth;
+  const H = 360;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const PAD_L = 64, PAD_R = 24, PAD_T = 30, PAD_B = 50;
+  const chartW = W - PAD_L - PAD_R;
+  const chartH = H - PAD_T - PAD_B;
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.fillStyle = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)';
+  ctx.beginPath();
+  ctx.roundRect(PAD_L - 8, PAD_T - 8, chartW + 16, chartH + 16, 8);
+  ctx.fill();
+
+  const vLevels = [1.5, 2.5, 3.5];
+  const vLabels = ['1.5 V', '2.5 V', '3.5 V'];
+  ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+  ctx.lineWidth = 0.5; ctx.setLineDash([4, 4]);
+  vLevels.forEach((v, i) => {
+    const y = PAD_T + chartH - ((v - V_MIN) / (V_MAX - V_MIN)) * chartH;
+    ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(PAD_L + chartW, y); ctx.stroke();
+    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)';
+    ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(vLabels[i], PAD_L - 6, y + 3.5);
+  });
+  ctx.setLineDash([]);
+
+  const slotW = chartW / (BITS + 2);
+  ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
+  ctx.lineWidth = 0.5;
+  for (let i = 1; i <= BITS + 1; i++) {
+    const x = PAD_L + i * slotW;
+    ctx.beginPath(); ctx.moveTo(x, PAD_T); ctx.lineTo(x, PAD_T + chartH); ctx.stroke();
+  }
+
+  function yOf(v) { return PAD_T + chartH - ((v - V_MIN) / (V_MAX - V_MIN)) * chartH; }
+  function xOf(slot) { return PAD_L + slot * slotW; }
+
+  function buildWave(domVal, recVal) {
+    const pts = [];
+    pts.push([xOf(0), yOf(recVal)]);
+    pts.push([xOf(1), yOf(recVal)]);
+    for (let i = 0; i < BITS; i++) {
+      const v = bits[i] === 0 ? domVal : recVal;
+      const vPrev = i === 0 ? recVal : (bits[i-1] === 0 ? domVal : recVal);
+      if (v !== vPrev) { pts.push([xOf(1 + i), yOf(vPrev)]); pts.push([xOf(1 + i), yOf(v)]); }
+      pts.push([xOf(2 + i), yOf(v)]);
+    }
+    const vLast = bits[BITS-1] === 0 ? domVal : recVal;
+    if (vLast !== recVal) { pts.push([xOf(BITS + 1), yOf(vLast)]); pts.push([xOf(BITS + 1), yOf(recVal)]); }
+    pts.push([xOf(BITS + 2), yOf(recVal)]);
+    return pts;
+  }
+
+  function drawWave(pts, color) {
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    pts.forEach(([x, y], i) => i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y));
+    ctx.stroke();
+  }
+
+  const canhPts = buildWave(CANH_DOM, CANH_REC);
+  const canlPts = buildWave(CANL_DOM, CANL_REC);
+
+  ctx.globalAlpha = 0.12; ctx.fillStyle = '#378ADD';
+  ctx.beginPath();
+  canhPts.forEach(([x,y], i) => i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y));
+  [...canlPts].reverse().forEach(([x,y]) => ctx.lineTo(x,y));
+  ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+
+  drawWave(canhPts, '#378ADD');
+  drawWave(canlPts, '#D85A30');
+
+  ctx.font = '500 12px sans-serif'; ctx.textAlign = 'center';
+  for (let i = 0; i < BITS; i++) {
+    const cx = xOf(1 + i) + slotW / 2;
+    ctx.fillStyle = bits[i] === 0 ? '#185FA5' : (isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)');
+    ctx.fillText(bits[i], cx, PAD_T - 10);
+  }
+
+  ctx.font = '10px sans-serif';
+  ctx.fillStyle = isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)';
+  ctx.fillText('idle', xOf(0) + slotW / 2, PAD_T + chartH + 20);
+  for (let i = 0; i < BITS; i++) ctx.fillText('b' + (i+1), xOf(1+i) + slotW/2, PAD_T + chartH + 20);
+  ctx.fillText('idle', xOf(BITS+1) + slotW/2, PAD_T + chartH + 20);
+
+  ctx.save();
+  ctx.translate(12, PAD_T + chartH / 2); ctx.rotate(-Math.PI / 2);
+  ctx.font = '11px sans-serif';
+  ctx.fillStyle = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)';
+  ctx.textAlign = 'center'; ctx.fillText('Voltage (V)', 0, 0);
+  ctx.restore();
+
+  ctx.font = '500 11px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillStyle = '#378ADD';
+  ctx.fillText('CANH', canhPts[canhPts.length-1][0] + 4, yOf(CANH_REC) + 4);
+  ctx.fillStyle = '#D85A30';
+  ctx.fillText('CANL', canlPts[canlPts.length-1][0] + 4, yOf(CANL_REC) + 4);
+}
+
+buildBitRow();
+draw();
+window.addEventListener('resize', draw);
+</script>
+</body>
+</html>
