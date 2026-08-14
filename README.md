@@ -1,6 +1,7 @@
 # CAN Bus CANH / CANL Waveform Visualizer
 
 An interactive HTML widget that renders the differential CANH and CANL voltage waveforms for an 8-bit CAN bus data sequence.
+<br>
 Try it : https://can-bus-waveform.vercel.app/
 
 ## Files
